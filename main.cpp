@@ -19,7 +19,7 @@ void Order(int num) {
 
 int main() {
     system("chcp 65001");
-    ThreadPool tp(3, 30, 30);
+    ThreadPool tp(3, 100, 30, 5, 1000);
     //tp.SafelyExit(false);
     //tp.ReceiveAllTask(false);
     tp.Start();

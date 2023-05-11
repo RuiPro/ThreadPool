@@ -16,7 +16,10 @@ class WorkerThread;
 class ThreadPool {
     friend WorkerThread;
 public:
-    ThreadPool(int min_thread_num, int max_thread_num, int max_task_num);     // 构造
+    ThreadPool(int min_thread_num, int max_thread_num, int max_task_num,
+        int wave_range = 5, int manager_check_interval = 2000);               // 构造
+    ThreadPool(const ThreadPool&) = delete;
+    ThreadPool(ThreadPool&&) = delete;
     ~ThreadPool();                                                            // 析构
     template<class F, class... Args>
     int AddTask(F func, Args... args);                                        // 【模板】添加任务
@@ -24,6 +27,9 @@ public:
     void Terminate();                                                         // 结束运作
     void SafelyExit(bool);                                                    // 设置强制结束
     void ReceiveAllTask(bool);                                                // 设置队列满时阻塞添加任务
+    void SetWaveRange(int);                                                   // 设置每次调整加/减多少线程
+    void SetCheckInterval(int);                                               // 设置每隔多少毫秒检查一次
+    void SetMaxTaskNum(int);
     int GetMaxThreadNum() const;
     int GetMinThreadNum() const;
     int GetMaxTaskNum() const;
@@ -32,7 +38,8 @@ private:
     int max_thread_num;                         // 线程池内能达到的最大线程数量
     int min_thread_num;                         // 线程池内至少存在的线程数量
     int max_task_num;                           // 线程池存储的最大任务数量，0代表无上限
-    int wave_range = 3;                         // 每次调整加/减多少线程
+    int wave_range;                             // 每次调整加/减多少线程
+    int manager_check_interval;                 // 管理者线程每隔多少毫秒检查一次
     int alive_thread_num;                       // 存活的线程数，只有管理者线程修改，不需加锁
     std::atomic<int> working_thread_num{};      // 正在工作的线程数
     std::atomic<int> exit_thread_num{};         // 准备退出的线程数
@@ -45,7 +52,7 @@ private:
     std::mutex to_destroy_mutex;                // 锁销毁队列
     short state_code;                           // 状态码：0创建但未运行 1正在运行 2结束准备销毁
     bool destroy_with_no_task = true;           // 是否在销毁线程池之前执行完任务队列中剩下的任务，默认是
-    bool block_task_when_full = true;           // 在任务队列满的时候是否阻塞添加任务函数，默认是
+    bool block_add_task_when_full = true;           // 在任务队列满的时候是否阻塞添加任务函数，默认是
     // 如果选择否，那么在任务队列满的时候添加任务会返回-1
 
     void manager_func();                        // 管理者线程函数
@@ -68,7 +75,7 @@ int ThreadPool::AddTask(F func, Args... args) {
     // 线程池还没开启的时候不可以添加任务
     if (state_code != 1) return -1;
     std::unique_lock<std::mutex> uniqueLock(task_queue_mutex);
-    if (block_task_when_full) {
+    if (block_add_task_when_full) {
         // 满的时候休眠
         while (task_queue->size() >= max_task_num) {
             cond.wait(uniqueLock);
@@ -78,23 +85,20 @@ int ThreadPool::AddTask(F func, Args... args) {
                 return -1;
             }
         }
-    } else {
+    }
+    else {
         // 当不允许添加任务立即返回
         if (max_task_num == -1) {
-            uniqueLock.unlock();
             return -1;
         }
         // 当max_task_num不为0并且任务数量抵达上限时返回-1
         if (max_task_num != 0 && task_queue->size() >= max_task_num) {
-            uniqueLock.unlock();
             return -1;
         }
     }
     task_queue->push(std::bind(func, args...));
-    uniqueLock.unlock();
 
     cond.notify_all();
     return 0;
 }
-
 #endif

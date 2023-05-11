@@ -1,12 +1,17 @@
 #include "ThreadPool.hpp"
 
-ThreadPool::ThreadPool(int min_thread_num, int max_thread_num, int max_task_num) {
+ThreadPool::ThreadPool(int min_thread_num, int max_thread_num, int max_task_num,
+                       int wave_range, int manager_check_interval) {
     if (max_thread_num < min_thread_num || max_thread_num <= 0 ||
-        min_thread_num < 0 || max_task_num < 0)
+        min_thread_num < 0 || max_task_num < 0 || wave_range < 0 || manager_check_interval < 0){
+        throw "ThreadPool: illegal parameter.";
         return;
+    }
     this->max_thread_num = max_thread_num;
     this->min_thread_num = min_thread_num;
     this->max_task_num = max_task_num;
+    this->wave_range = wave_range;
+    this->manager_check_interval = manager_check_interval;
     alive_thread_num = 0;
     working_thread_num.store(0);
     exit_thread_num.store(0);
@@ -88,7 +93,7 @@ void ThreadPool::manager_func() {
     // 当线程池开启时一直工作
     while (state_code == 1) {
         // 每2秒监视一次
-        std::this_thread::sleep_for(std::chrono::seconds(2));
+        std::this_thread::sleep_for(std::chrono::milliseconds(manager_check_interval));
         //printf("管理者线程监视一次，当前存活线程数量%d个，正在工作线程%d个，任务%zu个\n", alive_thread_num,
         //       working_thread_num.load(), task_queue->size());
         // 线程不够时创建线程：存活数<最大数 并且 所有线程都在工作
@@ -144,21 +149,35 @@ void ThreadPool::manager_func() {
 }
 
 void ThreadPool::SafelyExit(bool arg) {
-    if(state_code == 0)
+    if (state_code == 0)
         this->destroy_with_no_task = arg;
 }
 
 void ThreadPool::ReceiveAllTask(bool arg) {
-    if(state_code == 0)
-        this->block_task_when_full = arg;
+    if (state_code == 0)
+        this->block_add_task_when_full = arg;
+}
+
+void ThreadPool::SetWaveRange(int i) {
+    this->wave_range = i;
+}
+
+void ThreadPool::SetCheckInterval(int i) {
+    this->manager_check_interval = i;
+}
+
+void ThreadPool::SetMaxTaskNum(int i) {
+    this->max_task_num = i;
 }
 
 int ThreadPool::GetMaxThreadNum() const {
     return this->max_thread_num;
 }
+
 int ThreadPool::GetMinThreadNum() const {
     return this->min_thread_num;
 }
+
 int ThreadPool::GetMaxTaskNum() const {
     return this->max_task_num;
 }
@@ -207,7 +226,12 @@ void WorkerThread::worker_func() {
         // 工作线程数量加一
         ++pool->working_thread_num;
         // 执行任务
-        task();
+        try {
+            task();
+        }
+        catch (...) {
+            printf("ThreadPool Exception: a task is not running properly.\n");
+        }
         // 执行完任务，工作线程数量减一
         --pool->working_thread_num;
     }
